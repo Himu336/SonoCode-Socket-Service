@@ -5,13 +5,24 @@ const Redis = require('ioredis');
 const bodyParser = require('body-parser');
 
 const app = express();
-app.use(bodyParser.json);
+app.use(bodyParser.json());
+
 
 const httpServer = createServer(app);
 
-const redisCache = new Redis(); // create redis client
+const redisCache = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379'); // create redis client
 
-const io = new Server(httpServer, { });
+// Allow configuring CORS origins via environment variable (comma-separated)
+const configuredOrigins = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map(o => o.trim()).filter(Boolean)
+    : "*";
+
+const io = new Server(httpServer, { 
+    cors: {
+        origin: configuredOrigins,
+        methods: ["GET", "POST"]
+    }
+});
 
 io.on("connection", (socket) => {
     console.log("A user connected" + socket.id);
@@ -32,19 +43,25 @@ io.on("connection", (socket) => {
 app.post('/sendPayload', async (req, res) => {
     const { userId, payload } = req.body;
     if(!userId || !payload) {
-        res.status(400).send("Invalid request");
+        return res.status(400).send("Invalid request");
     }
 
     const socketId = await redisCache.get(userId);
 
     if(socketId) {
         io.to(socketId).emit('submissionPayloadResponse', payload);
-        res.send("Payload sent successfully");
+        return res.send("Payload sent successfully");
     } else {
-        res.status(404).send("User not connected");
+        return res.status(404).send("User not connected");
     }
 });
 
-httpServer.listen(4003, () => {
-    console.log("Server is running on port 4003");
+// Simple health endpoint for load balancers and uptime checks
+app.get('/health', (req, res) => {
+    res.status(200).send('OK');
+});
+
+const PORT = process.env.PORT || 4003;
+httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on port ${PORT}`);
 });
